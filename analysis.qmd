@@ -14,3 +14,76 @@ library(leaflet)
 library(jsonlite)
 ```
 
+```{r}
+raw <- read_json("data/wildfires.geojson")
+length(raw$features)
+```
+
+```{r}
+fire <- raw$features[[1]]
+names(fire)
+first_boundary_coordinate <- fire$geometry$coordinates[[1]][[1]]
+first_boundary_coordinate
+```
+
+```{r}
+#| cache: true
+fires <- tibble(features = raw$features) |>
+  unnest_wider(features) |>
+  unnest_wider(properties) |>
+  unnest_wider(geometry, names_sep = "_") |>
+  select(incident, gis_acres, fire_year, agency, state, geometry_coordinates) |>
+  mutate(
+    gis_acres = as.numeric(gis_acres),
+    fire_year = as.integer(fire_year)
+  )
+```
+
+```{r}
+fires |>
+  filter(str_detect(incident, "August")) |>
+  nrow()
+
+fires |>
+  slice_max(gis_acres, n = 10, with_ties = FALSE) |>
+  select(incident, gis_acres, fire_year, agency, state)
+```
+
+```{r}
+big_fires <- fires |>
+  filter(gis_acres >= 100000)
+
+top_fires <- big_fires |>
+  slice_max(gis_acres, n = 10, with_ties = FALSE)
+```
+
+```{r}
+boundary_coordinates <- top_fires$geometry_coordinates |>
+  map(\(boundary) boundary[[1]]) |>
+  purrr::list_flatten()
+lng <- map_dbl(boundary_coordinates, \(point) point[[1]])
+lat <- map_dbl(boundary_coordinates, \(point) point[[2]])
+
+map <- leaflet() |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+  fitBounds(min(lng), min(lat), max(lng), max(lat))
+
+for (i in seq_len(nrow(top_fires))) {
+  fire <- top_fires[i, ]
+  boundary <- fire$geometry_coordinates[[1]][[1]]
+
+  map <- map |>
+    addPolygons(
+      lng = map_dbl(boundary, \(point) point[[1]]),
+      lat = map_dbl(boundary, \(point) point[[2]]),
+      popup = paste0(
+        fire$incident,
+        "<br>Year: ", fire$fire_year,
+        "<br>Acreage: ", format(fire$gis_acres, big.mark = ",", trim = TRUE)
+      )
+    )
+}
+
+map
+```
+
